@@ -1,88 +1,182 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>YouTube Filtro</title>
+  <title>Explorador PRO YouTube</title>
 </head>
 <body>
 
-<h2>Filtro de YouTube</h2>
+<h2>Explorador de Nichos PRO</h2>
 
-<input type="number" id="minViews" placeholder="Vistas mínimas">
-<input type="number" id="minSubs" placeholder="Subs mínimas">
+<!-- FILTROS -->
+<input type="number" id="minViews" placeholder="Min views">
+<input type="number" id="maxViews" placeholder="Max views">
 
-<select id="duration">
-  <option value="all">Todos</option>
-  <option value="short">Shorts</option>
-  <option value="medium">Medio</option>
-  <option value="long">Largo</option>
+<input type="number" id="minSubs" placeholder="Min subs">
+<input type="number" id="maxSubs" placeholder="Max subs">
+
+<select id="tipo">
+  <option value="all">Tipo: Todos</option>
+  <option value="short">Shorts (<4min)</option>
+  <option value="medium">Medio (4-20min)</option>
+  <option value="long">Largo (>20min)</option>
 </select>
 
-<button onclick="buscar()">Buscar</button>
+<select id="idioma">
+  <option value="all">Idioma: Todos</option>
+  <option value="en">Inglés</option>
+  <option value="es">Español</option>
+</select>
+
+<select id="fecha">
+  <option value="any">Cualquier fecha</option>
+  <option value="hour">Última hora</option>
+  <option value="today">Hoy</option>
+  <option value="week">Semana</option>
+  <option value="month">Mes</option>
+  <option value="year">Año</option>
+</select>
+
+<button onclick="resetBuscar()">Explorar</button>
 
 <div id="results"></div>
 
 <script>
 const API_KEY = "AIzaSyAhxReFBVs_RO3x7uWbz8CpMbvYAQdvvzc";
 
+const queries = ["a","e","i","o","u","the","game","music","how","news"];
+
+let nextPageToken = "";
+let cargando = false;
+
+function resetBuscar(){
+  document.getElementById("results").innerHTML = "";
+  nextPageToken = "";
+  buscar();
+}
+
 async function buscar() {
-  document.getElementById("results").innerHTML = "Cargando...";
+  if (cargando) return;
+  cargando = true;
 
-  let res = await fetch(
-    "https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&chart=mostPopular&maxResults=10&key=" + API_KEY
-  );
+  document.getElementById("results").innerHTML += "<p>Cargando...</p>";
 
+  let minViews = parseInt(minViewsEl.value) || 0;
+  let maxViews = parseInt(maxViewsEl.value) || Infinity;
+  let minSubs = parseInt(minSubsEl.value) || 0;
+  let maxSubs = parseInt(maxSubsEl.value) || Infinity;
+  let tipo = tipoEl.value;
+  let idioma = idiomaEl.value;
+  let fecha = fechaEl.value;
+
+  let q = queries[Math.floor(Math.random()*queries.length)];
+
+  let url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=20&q=${q}&key=${API_KEY}`;
+  if (nextPageToken) url += `&pageToken=${nextPageToken}`;
+
+  let res = await fetch(url);
   let data = await res.json();
 
-  let minViews = parseInt(document.getElementById("minViews").value) || 0;
-  let minSubs = parseInt(document.getElementById("minSubs").value) || 0;
-  let duration = document.getElementById("duration").value;
+  nextPageToken = data.nextPageToken || "";
 
-  let channelIds = data.items.map(v => v.snippet.channelId).join(",");
+  let ids = data.items.map(v => v.id.videoId).join(",");
 
-  let resChannels = await fetch(
-    "https://www.googleapis.com/youtube/v3/channels?part=statistics&id=" + channelIds + "&key=" + API_KEY
+  let resVideos = await fetch(
+    `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails&id=${ids}&key=${API_KEY}`
   );
 
-  let channelData = await resChannels.json();
+  let videos = await resVideos.json();
+
+  let channelIds = videos.items.map(v => v.snippet.channelId).join(",");
+
+  let resChannels = await fetch(
+    `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelIds}&key=${API_KEY}`
+  );
+
+  let channels = await resChannels.json();
 
   let subsMap = {};
-  channelData.items.forEach(c => {
-    subsMap[c.id] = parseInt(c.statistics.subscriberCount || 0);
+  channels.items.forEach(c=>{
+    subsMap[c.id]=parseInt(c.statistics.subscriberCount||0);
   });
 
   let html = "";
 
-  data.items.forEach(v => {
-    let views = parseInt(v.statistics.viewCount);
-    let subs = subsMap[v.snippet.channelId] || 0;
+  videos.items.forEach(v=>{
+    let views = parseInt(v.statistics.viewCount||0);
+    let subs = subsMap[v.snippet.channelId]||0;
 
     let dur = v.contentDetails.duration;
-    let match = dur.match(/PT(\d+H)?(\d+M)?/);
-    let horas = match[1] ? parseInt(match[1]) : 0;
-    let min = match[2] ? parseInt(match[2]) : 0;
-    let totalMin = horas * 60 + min;
+    let m = dur.match(/PT(\d+H)?(\d+M)?/);
+    let h = m[1]?parseInt(m[1]):0;
+    let min = m[2]?parseInt(m[2]):0;
+    let total = h*60+min;
 
-    let okDur = true;
-    if (duration === "short") okDur = totalMin < 4;
-    if (duration === "medium") okDur = totalMin >= 4 && totalMin <= 20;
-    if (duration === "long") okDur = totalMin > 20;
+    let okTipo = true;
+    if(tipo==="short") okTipo = total<4;
+    if(tipo==="medium") okTipo = total>=4 && total<=20;
+    if(tipo==="long") okTipo = total>20;
 
-    if (views >= minViews && subs >= minSubs && okDur) {
+    let okIdioma = true;
+    if(idioma!=="all"){
+      okIdioma = v.snippet.defaultAudioLanguage?.startsWith(idioma);
+    }
+
+    let okFecha = filtrarFecha(v.snippet.publishedAt,fecha);
+
+    if(
+      views>=minViews && views<=maxViews &&
+      subs>=minSubs && subs<=maxSubs &&
+      okTipo && okIdioma && okFecha
+    ){
       html += `
-        <div style="margin:20px;">
-          <h3>${v.snippet.title}</h3>
-          <iframe width="300" height="170"
-          src="https://www.youtube.com/embed/${v.id}">
-          </iframe>
-          <p>👁 ${views} | 👤 ${subs}</p>
-        </div>
-      `;
+      <div style="margin:20px;">
+        <h3>${v.snippet.title}</h3>
+        <iframe width="300" height="170"
+        src="https://www.youtube.com/embed/${v.id}">
+        </iframe>
+        <p>👁 ${views} | 👤 ${subs} | ⏱ ${total} min</p>
+      </div>`;
     }
   });
 
-  document.getElementById("results").innerHTML = html || "No hay resultados";
+  document.getElementById("results").innerHTML += html;
+
+  cargando = false;
 }
+
+function filtrarFecha(fecha,tipo){
+  if(tipo==="any") return true;
+
+  let now = new Date();
+  let f = new Date(fecha);
+  let diff = (now-f)/1000;
+
+  if(tipo==="hour") return diff<=3600;
+  if(tipo==="today") return diff<=86400;
+  if(tipo==="week") return diff<=604800;
+  if(tipo==="month") return diff<=2592000;
+  if(tipo==="year") return diff<=31536000;
+
+  return true;
+}
+
+// SCROLL INFINITO
+window.addEventListener("scroll",()=>{
+  if(window.innerHeight + window.scrollY >= document.body.offsetHeight-200){
+    buscar();
+  }
+});
+
+// shortcuts elementos
+const minViewsEl = document.getElementById("minViews");
+const maxViewsEl = document.getElementById("maxViews");
+const minSubsEl = document.getElementById("minSubs");
+const maxSubsEl = document.getElementById("maxSubs");
+const tipoEl = document.getElementById("tipo");
+const idiomaEl = document.getElementById("idioma");
+const fechaEl = document.getElementById("fecha");
+
 </script>
 
 </body>
-  </html>
+</html>
